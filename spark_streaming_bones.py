@@ -47,7 +47,7 @@ def create_spark_session(app_name="NBA-live-updates"):
         .getOrCreate()
     return spark
 
-def build_stream(spark):
+def build_stream(spark, ckpt_path):
     # Snowflake options
     sfOptions = {
       "sfURL": "sfedu02-unb02139.snowflakecomputing.com",
@@ -72,7 +72,7 @@ def build_stream(spark):
     # Read kafka stream -- need to configure properly
     spark_stream = spark.readStream.format("kafka")
 
-    processed_data = spark_stream.select(from_json(col("value").cast("string"), nba_schema).alias("data")) \
+    processed_df = spark_stream.select(from_json(col("value").cast("string"), nba_schema).alias("data")) \
             .select("data.*").withColumn("processed_time", current_timestamp())
 
 
@@ -84,7 +84,8 @@ def build_stream(spark):
             .mode("append") \
             .save()
        
-    sf_query = tumbling_window_df.writeStream.outputMode("update").format("console").option("ChechpointLocation", ckpt_path).start()
+    # Write stream every 30s window -- can add more sophisticated window/watermark
+    sf_query = processed_df.writeStream.foreachBatch(snowflake_write).trigger(processingTime="30 seconds").option("ChechpointLocation", ckpt_path).start()
 
-    return console_query, parquet_query, ec_query
+    return sf_query
     
