@@ -1,10 +1,16 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, current_timestamp
 from pyspark.sql.window import Window
+from pyspark.sql.types import StructType, StringType, IntegerType
 import os
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from pyspark.sql.types import DoubleType
+
+
+kafka_broker = "localhost:9092"
+topic = "NBA-live-updates"
+checkpoint = "/tmp/nba_stream_checkpoint"
 
 def get_private_key_string(key_path, password=None):
     """Reads a PEM private key and returns the string format required by PySpark."""
@@ -43,11 +49,12 @@ def create_spark_session(app_name="NBA-live-updates"):
         .appName(app_name) \
         .master(master_url) \
         .config("spark.driver.memory", "4g") \
-        .config("spark.jars.packages", "net.snowflake:snowflake-jdbc:3.13.30,net.snowflake:spark-snowflake_2.13:2.12.0-spark_3.4") \
+        .config("spark.jars.packages", "net.snowflake:snowflake-jdbc:3.13.30,net.snowflake:spark-snowflake_2.13:2.12.0-spark_3.4,org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0") \
         .getOrCreate()
     return spark
 
-def build_stream(spark, ckpt_path):
+def build_stream(spark, ckpt_path=checkpoint):
+    key_path = "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"
     # Snowflake options
     sfOptions = {
       "sfURL": "sfedu02-unb02139.snowflakecomputing.com",
@@ -55,7 +62,7 @@ def build_stream(spark, ckpt_path):
       "sfDatabase": "DOLPHIN_DB",
       "sfSchema": "PUBLIC",
       "sfWarehouse": "DOLPHIN_WH",
-      "pem_private_key": "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"
+      "pem_private_key": get_private_key_string(key_path)
     }
 
     # schema outline
@@ -70,22 +77,33 @@ def build_stream(spark, ckpt_path):
             .add("game_status", StringType()) 
 
     # Read kafka stream -- need to configure properly
-    spark_stream = spark.readStream.format("kafka")
+    spark_stream = spark.readStream.format("kafka") \
+        .option("kafka.bootstrap.servers", kafka_broker) \
+        .option("subscribe", topic) \
+        .option("startingOffsets", "latest") \
+        .load()
 
     processed_df = spark_stream.select(from_json(col("value").cast("string"), nba_schema).alias("data")) \
             .select("data.*").withColumn("processed_time", current_timestamp())
 
 
     def snowflake_write(batch_df, batch_id):
+        if batch_df.count() == 0:
+            print(f"Batch {batch_id}: empty, skipping.")
+            return
         batch_df.write \
             .format("net.snowflake.spark.snowflake") \
-            .options(sfOptions) \
+            .options(**sfOptions) \
             .option("dbtable", "LIVE_DATA") \
             .mode("append") \
             .save()
        
     # Write stream every 30s window -- can add more sophisticated window/watermark
-    sf_query = processed_df.writeStream.foreachBatch(snowflake_write).trigger(processingTime="30 seconds").option("ChechpointLocation", ckpt_path).start()
+    sf_query = processed_df.writeStream.foreachBatch(snowflake_write).trigger(processingTime="30 seconds").option("checkpointLocation", ckpt_path).start()
 
     return sf_query
     
+if __name__ == "__main__":
+    spark = create_spark_session()
+    query = build_stream(spark)
+    query.awaitTermination()
