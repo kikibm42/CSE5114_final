@@ -38,7 +38,7 @@ import os
 # Configuration — update key_path if running locally
 # ---------------------------------------------------------------------------
 NBA_SCOREBOARD_URL  = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
-POLL_INTERVAL_SEC   = 30       # How often to hit the NBA API
+POLL_INTERVAL_SEC   = 5      # How often to hit the NBA API
 SNOWFLAKE_KEY_PATH  = "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"  # ← update for local
 CHECKPOINT_PATH     = "/tmp/nba_stream_checkpoint"
 
@@ -51,7 +51,6 @@ game_queue: queue.Queue = queue.Queue()
 # Private key helper
 # ---------------------------------------------------------------------------
 def get_private_key_string(key_path: str, password: str = None) -> str:
-    """Return the raw base64 PEM key string that the Snowflake Spark connector needs."""
     with open(key_path, "rb") as f:
         p_key = serialization.load_pem_private_key(
             f.read(),
@@ -99,7 +98,7 @@ def poller_thread(stop_event: threading.Event):
                     "a_points":    int(game["awayTeam"]["score"] or 0),
                     "quarter":     int(game["period"] or 0),
                     "clock":       str(game["gameClock"] or ""),
-                    "game_status": str(game["gameStatusText"] or ""),
+                    "game_status": str(game["gameStatus"] or ""),
                 }
                 game_queue.put(event)
                 print(f"[Poller] Queued: {event['h_team']} vs {event['a_team']} | "
@@ -141,8 +140,7 @@ def create_spark_session(app_name: str = "NBA-Live-Streaming") -> SparkSession:
             "spark.jars.packages",
             ",".join([
                 "net.snowflake:snowflake-jdbc:3.13.30",
-                "net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4",
-                # No Kafka JAR needed anymore
+                "net.snowflake:spark-snowflake_2.13:2.12.0-spark_3.4"
             ])
         ) \
         .getOrCreate()
