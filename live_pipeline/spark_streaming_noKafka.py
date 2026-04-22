@@ -33,11 +33,12 @@ import threading
 import queue
 import time
 import os
+from nba_api.live.nba.endpoints import scoreboard
 
 # ---------------------------------------------------------------------------
 # Configuration — update key_path if running locally
 # ---------------------------------------------------------------------------
-NBA_SCOREBOARD_URL  = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
+# NBA_SCOREBOARD_URL  = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
 POLL_INTERVAL_SEC   = 5      # How often to hit the NBA API
 SNOWFLAKE_KEY_PATH  = "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"  # ← update for local
 CHECKPOINT_PATH     = "/tmp/nba_stream_checkpoint"
@@ -72,11 +73,15 @@ def get_private_key_string(key_path: str, password: str = None) -> str:
 # ---------------------------------------------------------------------------
 # NBA API poller (runs in a background thread)
 # ---------------------------------------------------------------------------
+# def fetch_games() -> list:
+#     """Fetch today's scoreboard and return a list of game dicts."""
+#     r = requests.get(NBA_SCOREBOARD_URL, timeout=10)
+#     r.raise_for_status()
+#     return r.json()["scoreboard"]["games"]
 def fetch_games() -> list:
-    """Fetch today's scoreboard and return a list of game dicts."""
-    r = requests.get(NBA_SCOREBOARD_URL, timeout=10)
-    r.raise_for_status()
-    return r.json()["scoreboard"]["games"]
+    board = scoreboard.ScoreBoard()
+    games = board.get_dict()["scoreboard"]["games"]
+    return games
 
 
 def poller_thread(stop_event: threading.Event):

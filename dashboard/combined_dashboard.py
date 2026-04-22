@@ -263,7 +263,7 @@ def fetch_live_games() -> pd.DataFrame:
     """)
     if df.empty:
         return df
-    mask = df["game_status"].str.strip() == "3"
+    mask = df["game_status"].str.strip() == "2"
     return df[mask].reset_index(drop=True)
  
  
@@ -424,65 +424,27 @@ def render_score_progression(history: pd.DataFrame, h_team: str, a_team: str) ->
     if history.empty:
         st.info("No score history available yet for this game.")
         return
-
-    history = history.copy()
-    history["processed_time"] = pd.to_datetime(history["processed_time"])
-    history = history.sort_values("processed_time").reset_index(drop=True)
-
-    # Find where quarter changes for vertical markers
-    quarter_changes = history[history["quarter"] != history["quarter"].shift()]
-
     fig = go.Figure()
-
-    # Home team line
     fig.add_trace(go.Scatter(
-        x=history["processed_time"],
-        y=history["h_points"],
-        name=h_team,
-        line=dict(color="#f5a623", width=3),
-        mode="lines+markers",
-        marker=dict(size=6),
-        hovertemplate=f"<b>{h_team}</b>: %{{y}} pts<br>%{{x|%I:%M %p}}<extra></extra>",
+        x=history["processed_time"], y=history["h_points"],
+        name=h_team, line=dict(color="#f5a623", width=2.5),
+        mode="lines+markers", marker=dict(size=5),
     ))
-
-    # Away team line
     fig.add_trace(go.Scatter(
-        x=history["processed_time"],
-        y=history["a_points"],
-        name=a_team,
-        line=dict(color="#69f0ae", width=3),
-        mode="lines+markers",
-        marker=dict(size=6),
-        hovertemplate=f"<b>{a_team}</b>: %{{y}} pts<br>%{{x|%I:%M %p}}<extra></extra>",
+        x=history["processed_time"], y=history["a_points"],
+        name=a_team, line=dict(color="#69f0ae", width=2.5),
+        mode="lines+markers", marker=dict(size=5),
     ))
-
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(22,22,46,0.6)",
-        font=dict(family="Barlow Condensed", color="#cccccc", size=15),
-        margin=dict(l=0, r=0, t=20, b=0),
+        font=dict(family="Barlow Condensed", color="#aaa", size=16),
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis=dict(gridcolor="#2a2a4a"),
+        yaxis=dict(gridcolor="#2a2a4a"),
         hovermode="x unified",
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1,
-            font=dict(size=18, family="Barlow Condensed"),
-        ),
-        xaxis=dict(
-            gridcolor="#2a2a4a",
-            tickformat="%I:%M %p",
-            title=dict(text="Time", font=dict(size=16)),
-            tickfont=dict(size=14),
-        ),
-        yaxis=dict(
-            gridcolor="#2a2a4a",
-            title=dict(text="Points", font=dict(size=16)),
-            tickfont=dict(size=14),
-        ),
     )
-
     st.plotly_chart(fig, use_container_width=True)
  
  
