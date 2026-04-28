@@ -40,7 +40,7 @@ CSE5114_final/
 │
 │── passkeys/                       # Snowflake authentication keys
 │── README.md
-
+```
 
 ## Prerequisites
 
@@ -259,9 +259,12 @@ Architecture (no Kafka):
 ```
 Requires Kafka running at `localhost:9092` and the `LIVE_DATA` table created via `snowflake/schema.sql`.
 
+Run Kafka ingestion in one terminal
 ```bash
 python kafka_ingestion.py
 ```
+
+Run Spark streaming in additional terminal
 ```bash
 python spark_streaming_fromKafka.py
 ```
