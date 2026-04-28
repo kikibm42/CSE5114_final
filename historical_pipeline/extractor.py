@@ -29,9 +29,9 @@ import logging
 import os
 import time
 from datetime import date, timedelta
-from dateutil.relativedelta import relativedelta
 
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 from nba_api.stats.endpoints import (
     boxscoretraditionalv2,
     boxscoretraditionalv3,
@@ -41,14 +41,14 @@ from nba_api.stats.endpoints import (
 # ──────────────────────────────────────────────
 # DEFAULTS
 # ──────────────────────────────────────────────
-DEFAULT_START = date(2019, 10, 1)   # start of 2019-20 season
-DEFAULT_END   = date.today()
-DEFAULT_CHUNK_MONTHS  = 6
-DEFAULT_SLEEP         = 1.0   # seconds between box score requests
-LONG_PAUSE_EVERY      = 100   # games
-LONG_PAUSE_SECONDS    = 10
-MAX_RETRIES           = 3
-RETRY_BACKOFF         = 5    # extra seconds per retry attempt
+DEFAULT_START = date(2019, 10, 1)  # start of 2019-20 season
+DEFAULT_END = date.today()
+DEFAULT_CHUNK_MONTHS = 6
+DEFAULT_SLEEP = 1.0  # seconds between box score requests
+LONG_PAUSE_EVERY = 100  # games
+LONG_PAUSE_SECONDS = 10
+MAX_RETRIES = 3
+RETRY_BACKOFF = 5  # extra seconds per retry attempt
 
 OUTPUT_DIR = "./data/nba/raw"
 
@@ -63,16 +63,33 @@ log = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Backfill raw NBA data from stats.nba.com")
-    p.add_argument("--start", default=DEFAULT_START.isoformat(),
-                   help="Start date (YYYY-MM-DD). Default: 2019-10-01")
-    p.add_argument("--end",   default=DEFAULT_END.isoformat(),
-                   help="End date (YYYY-MM-DD). Default: today")
-    p.add_argument("--chunk-months", type=int, default=DEFAULT_CHUNK_MONTHS,
-                   help="Months per API chunk to avoid rate-limit timeouts. Default: 6")
-    p.add_argument("--sleep", type=float, default=DEFAULT_SLEEP,
-                   help="Seconds between box score requests. Default: 1.0")
-    p.add_argument("--skip-existing", action="store_true",
-                   help="Skip chunks whose output folder already exists on disk.")
+    p.add_argument(
+        "--start",
+        default=DEFAULT_START.isoformat(),
+        help="Start date (YYYY-MM-DD). Default: 2019-10-01",
+    )
+    p.add_argument(
+        "--end",
+        default=DEFAULT_END.isoformat(),
+        help="End date (YYYY-MM-DD). Default: today",
+    )
+    p.add_argument(
+        "--chunk-months",
+        type=int,
+        default=DEFAULT_CHUNK_MONTHS,
+        help="Months per API chunk to avoid rate-limit timeouts. Default: 6",
+    )
+    p.add_argument(
+        "--sleep",
+        type=float,
+        default=DEFAULT_SLEEP,
+        help="Seconds between box score requests. Default: 1.0",
+    )
+    p.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip chunks whose output folder already exists on disk.",
+    )
     return p.parse_args()
 
 
@@ -105,38 +122,71 @@ def save_parquet(df: pd.DataFrame, path: str):
     log.info(f"  Saved {len(df)} rows → {path}")
 
 
-_PLAYER_V3_TO_V2 = {
-    "gameId": "GAME_ID", "teamId": "TEAM_ID",
-    "teamTricode": "TEAM_ABBREVIATION", "teamName": "TEAM_NAME",
-    "personId": "PLAYER_ID", "position": "START_POSITION",
+_PLAYER_Vz_TO_V2 = {
+    "gameId": "GAME_ID",
+    "teamId": "TEAM_ID",
+    "teamTricode": "TEAM_ABBREVIATION",
+    "teamName": "TEAM_NAME",
+    "personId": "PLAYER_ID",
+    "position": "START_POSITION",
     "minutes": "MIN",
-    "fieldGoalsMade": "FGM", "fieldGoalsAttempted": "FGA",
+    "fieldGoalsMade": "FGM",
+    "fieldGoalsAttempted": "FGA",
     "fieldGoalsPercentage": "FG_PCT",
-    "threePointersMade": "FG3M", "threePointersAttempted": "FG3A",
+    "threePointersMade": "FG3M",
+    "threePointersAttempted": "FG3A",
     "threePointersPercentage": "FG3_PCT",
-    "freeThrowsMade": "FTM", "freeThrowsAttempted": "FTA",
+    "freeThrowsMade": "FTM",
+    "freeThrowsAttempted": "FTA",
     "freeThrowsPercentage": "FT_PCT",
-    "reboundsOffensive": "OREB", "reboundsDefensive": "DREB",
-    "reboundsTotal": "REB", "assists": "AST", "steals": "STL",
-    "blocks": "BLK", "turnovers": "TO", "foulsPersonal": "PF",
-    "points": "PTS", "plusMinusPoints": "PLUS_MINUS",
+    "reboundsOffensive": "OREB",
+    "reboundsDefensive": "DREB",
+    "reboundsTotal": "REB",
+    "assists": "AST",
+    "steals": "STL",
+    "blocks": "BLK",
+    "turnovers": "TO",
+    "foulsPersonal": "PF",
+    "points": "PTS",
+    "plusMinusPoints": "PLUS_MINUS",
 }
 _TEAM_V3_NUMERIC = [
-    "fieldGoalsMade", "fieldGoalsAttempted",
-    "threePointersMade", "threePointersAttempted",
-    "freeThrowsMade", "freeThrowsAttempted",
-    "reboundsOffensive", "reboundsDefensive", "reboundsTotal",
-    "assists", "steals", "blocks", "turnovers", "foulsPersonal", "points",
+    "fieldGoalsMade",
+    "fieldGoalsAttempted",
+    "threePointersMade",
+    "threePointersAttempted",
+    "freeThrowsMade",
+    "freeThrowsAttempted",
+    "reboundsOffensive",
+    "reboundsDefensive",
+    "reboundsTotal",
+    "assists",
+    "steals",
+    "blocks",
+    "turnovers",
+    "foulsPersonal",
+    "points",
 ]
 _TEAM_V3_TO_V2 = {
-    "gameId": "GAME_ID", "teamId": "TEAM_ID",
-    "teamTricode": "TEAM_ABBREVIATION", "teamName": "TEAM_NAME",
-    "fieldGoalsMade": "FGM", "fieldGoalsAttempted": "FGA",
-    "threePointersMade": "FG3M", "threePointersAttempted": "FG3A",
-    "freeThrowsMade": "FTM", "freeThrowsAttempted": "FTA",
-    "reboundsOffensive": "OREB", "reboundsDefensive": "DREB",
-    "reboundsTotal": "REB", "assists": "AST", "steals": "STL",
-    "blocks": "BLK", "turnovers": "TO", "foulsPersonal": "PF", "points": "PTS",
+    "gameId": "GAME_ID",
+    "teamId": "TEAM_ID",
+    "teamTricode": "TEAM_ABBREVIATION",
+    "teamName": "TEAM_NAME",
+    "fieldGoalsMade": "FGM",
+    "fieldGoalsAttempted": "FGA",
+    "threePointersMade": "FG3M",
+    "threePointersAttempted": "FG3A",
+    "freeThrowsMade": "FTM",
+    "freeThrowsAttempted": "FTA",
+    "reboundsOffensive": "OREB",
+    "reboundsDefensive": "DREB",
+    "reboundsTotal": "REB",
+    "assists": "AST",
+    "steals": "STL",
+    "blocks": "BLK",
+    "turnovers": "TO",
+    "foulsPersonal": "PF",
+    "points": "PTS",
 }
 
 
@@ -152,8 +202,23 @@ def normalize_v3_to_v2(
     for col in ("PLAYER_ID", "TEAM_ID"):
         if col in player_df.columns:
             player_df[col] = player_df[col].astype("Int64")
-    _stat_cols = ["FGM","FGA","FG3M","FG3A","FTM","FTA",
-                  "OREB","DREB","REB","AST","STL","BLK","TO","PF","PTS"]
+    _stat_cols = [
+        "FGM",
+        "FGA",
+        "FG3M",
+        "FG3A",
+        "FTM",
+        "FTA",
+        "OREB",
+        "DREB",
+        "REB",
+        "AST",
+        "STL",
+        "BLK",
+        "TO",
+        "PF",
+        "PTS",
+    ]
     for col in _stat_cols:
         if col in player_df.columns:
             player_df[col] = player_df[col].astype("float64")
@@ -162,15 +227,30 @@ def normalize_v3_to_v2(
     key = ["gameId", "teamId", "teamTricode", "teamName"]
     team_df = team_df.groupby(key, as_index=False)[_TEAM_V3_NUMERIC].sum()
     team_df = team_df.rename(columns=_TEAM_V3_TO_V2)
-    team_df["FG_PCT"]  = team_df["FGM"]  / team_df["FGA"].replace(0, float("nan"))
+    team_df["FG_PCT"] = team_df["FGM"] / team_df["FGA"].replace(0, float("nan"))
     team_df["FG3_PCT"] = team_df["FG3M"] / team_df["FG3A"].replace(0, float("nan"))
-    team_df["FT_PCT"]  = team_df["FTM"]  / team_df["FTA"].replace(0, float("nan"))
+    team_df["FT_PCT"] = team_df["FTM"] / team_df["FTA"].replace(0, float("nan"))
     team_df["PLUS_MINUS"] = float("nan")
     for col in ("TEAM_ID",):
         if col in team_df.columns:
             team_df[col] = team_df[col].astype("Int64")
-    _stat_cols = ["FGM","FGA","FG3M","FG3A","FTM","FTA",
-                  "OREB","DREB","REB","AST","STL","BLK","TO","PF","PTS"]
+    _stat_cols = [
+        "FGM",
+        "FGA",
+        "FG3M",
+        "FG3A",
+        "FTM",
+        "FTA",
+        "OREB",
+        "DREB",
+        "REB",
+        "AST",
+        "STL",
+        "BLK",
+        "TO",
+        "PF",
+        "PTS",
+    ]
     for col in _stat_cols:
         if col in team_df.columns:
             team_df[col] = team_df[col].astype("float64")
@@ -196,7 +276,9 @@ def get_box_score(game_id: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         return dfs[0], dfs[1]
 
 
-def fetch_with_retry(game_id: str, sleep: float) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+def fetch_with_retry(
+    game_id: str, sleep: float
+) -> tuple[pd.DataFrame, pd.DataFrame] | None:
     """Fetch box score with exponential backoff retries for rate-limit errors."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -206,7 +288,9 @@ def fetch_with_retry(game_id: str, sleep: float) -> tuple[pd.DataFrame, pd.DataF
             is_rate_limit = "Expecting value" in err or "Read timed out" in err
             if is_rate_limit and attempt < MAX_RETRIES:
                 wait = sleep + RETRY_BACKOFF * attempt
-                log.warning(f"  Rate limited on game {game_id} (attempt {attempt}) — retrying in {wait:.0f}s")
+                log.warning(
+                    f"  Rate limited on game {game_id} (attempt {attempt}) — retrying in {wait:.0f}s"
+                )
                 time.sleep(wait)
             else:
                 log.warning(f"  Failed for game {game_id}: {e}")
@@ -267,12 +351,14 @@ def extract_chunk(chunk_start: date, chunk_end: date, sleep: float):
 def main():
     args = parse_args()
     start = date.fromisoformat(args.start)
-    end   = date.fromisoformat(args.end)
+    end = date.fromisoformat(args.end)
 
     chunks = list(date_chunks(start, end, args.chunk_months))
     log.info("=" * 50)
-    log.info(f"NBA Extractor: {start} → {end} | {len(chunks)} chunks | "
-             f"{args.chunk_months}-month windows | sleep={args.sleep}s")
+    log.info(
+        f"NBA Extractor: {start} → {end} | {len(chunks)} chunks | "
+        f"{args.chunk_months}-month windows | sleep={args.sleep}s"
+    )
     log.info("=" * 50)
 
     for idx, (chunk_start, chunk_end) in enumerate(chunks, 1):
@@ -280,7 +366,9 @@ def main():
         existing_path = f"{OUTPUT_DIR}/games/date={partition}/data.parquet"
 
         if args.skip_existing and os.path.exists(existing_path):
-            log.info(f"[Chunk {idx}/{len(chunks)}] Skipping {partition} — already exists.")
+            log.info(
+                f"[Chunk {idx}/{len(chunks)}] Skipping {partition} — already exists."
+            )
             continue
 
         log.info(f"[Chunk {idx}/{len(chunks)}]")
