@@ -89,6 +89,12 @@ Run once to create the star schema:
 | User | `DOLPHIN` |
 ---
 
+LIVE_DATA initialization script 
+```sql
+-- In Snowflake worksheet:
+-- snowflake/create_live.sql
+```
+
 ## Historical Pipeline
 
 ### 1. Extract
