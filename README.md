@@ -14,6 +14,7 @@ NBA CDN (live scoreboard)                                     │
 ---
 ## Repo Structure 
 
+```
 CSE5114_final/
 │── airflow/dags/
 │   └── nba_daily_pipeline.py       # Airflow DAG for daily ingestion
@@ -228,24 +229,42 @@ airflow tasks test nba_daily_pipeline transform 2024-11-15
 
 ## Live Pipeline 
 
- 
+Pipeline without Kafka 
+```
 Architecture (no Kafka):
     NBA Stats API  (via nba_api package → stats.nba.com)
-        ↓  (polled every 10s by background thread)
+        ↓  (polled every 5s by background thread)
     Python Queue
-        ↓  (drained every 10s by Spark micro-batch)
+        ↓  (drained every 5s by Spark micro-batch)
     Spark DataFrame
         ↓
     Snowflake LIVE_DATA
- 
- 
-```bash
-run streamlit spark_streaming_noKafka.py
 ```
 
+Wait until results appear in LIVE_DATA to expect results in the dashboard
+```bash
+python spark_streaming_noKafka.py
+```
 
-
+Pipeline with Kafka 
+```
+Architecture (no Kafka):
+    NBA Stats API  (via nba_api package → stats.nba.com)
+        ↓  (continuously ingested with Kafka)
+    Kafka topic
+        ↓  (streamed with Spark)
+    Spark DataFrame
+        ↓
+    Snowflake LIVE_DATA
+```
 Requires Kafka running at `localhost:9092` and the `LIVE_DATA` table created via `snowflake/schema.sql`.
+
+```bash
+python kafka_ingestion.py
+```
+```bash
+python spark_streaming_fromKafka.py
+```
 
 ---
 
