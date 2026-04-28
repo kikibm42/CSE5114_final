@@ -7,10 +7,39 @@ NBA API (stats.nba.com)
   └─ extractor.py ──► Parquet files ──► transform.py ──► Snowflake ──► Streamlit Dashboard
                                                               ▲
 NBA CDN (live scoreboard)                                     │
-  └─ kafka_ingestion.py ──► Kafka ──► spark_streaming_bones.py (LIVE_DATA table)
+  └─ kafka_ingestion.py ──► Kafka ──► spark_streaming_fromKafka.py (LIVE_DATA table)
+  └─ Polling thread ──► spark_streaming_noKafka.py (LIVE_DATA table)
 ```
 
 ---
+## Repo Structure 
+
+CSE5114_final/
+│── airflow/dags/
+│   └── nba_daily_pipeline.py       # Airflow DAG for daily ingestion
+│
+│── historical_pipeline/
+│   ├── extractor.py                # Pulls NBA API data → Parquet
+│   ├── transform.py                # Loads data into Snowflake
+│   └── repair_parquet.py           # Fixes schema inconsistencies
+│
+│── live_pipeline/
+│   ├── kafka_ingestion.py          # Kafka producer (incomplete)
+│   ├── spark_streaming_fromKafka.py
+│   └── spark_streaming_noKafka.py
+│
+│── dashboard/
+│   ├── app.py                      # Streamlit dashboard
+│   └── combined_dashboard.py
+│
+│── snowflake/
+│   ├── schema.sql                  # Star schema DDL
+│   ├── create_live.sql             # LIVE_DATA table
+│   └── show_tables.sql             # Debug queries
+│
+│── passkeys/                       # Snowflake authentication keys
+│── README.md
+
 
 ## Prerequisites
 
@@ -50,6 +79,13 @@ Run once to create the star schema:
 | Warehouse | `MINNOW_WH` |
 | User | `MINNOW` |
 
+| Config | Value |
+|--------|-------|
+| Account | `sfedu02-unb02139` |
+| Database | `DOLPHIN_DB` |
+| Schema | `PUBLIC` |
+| Warehouse | `DOLPHIN_WH` |
+| User | `DOLPHIN` |
 ---
 
 ## Historical Pipeline
@@ -109,14 +145,18 @@ python transform.py --data-dir /path/to/data/nba/raw  # custom data dir
 ## Star Schema
 
 ```
-dim_team       — team_id, abbreviation, name, city, conference, division
-dim_player     — player_id, name, position, height, weight
-dim_date       — date, season (e.g. "2023-24"), season_type ("Regular Season" | "Playoffs" | "Pre-Season")
+Dimensions
+  dim_team
+  dim_player
+  dim_date
 
-fact_game               — game_id, date, home_team_id, away_team_id, home_score, away_score
-fact_game_team_stats    — per-team box score stats per game (FGM/FGA, 3PM/3PA, REB, AST, STL, BLK, TOV, PTS, ...)
-fact_game_player_stats  — per-player box score stats per game
-LIVE_DATA               — live game snapshots from streaming pipeline
+Facts
+  fact_game
+  fact_game_team_stats
+  fact_game_player_stats
+
+Streaming
+  LIVE_DATA
 ```
 
 To inspect row counts:
@@ -131,10 +171,13 @@ To inspect row counts:
 ```bash
 export NBA_PEM_KEY=/path/to/rsa_key.p8  # or enter path in the sidebar
 cd dashboard
-streamlit run app.py
+streamlit run dashboard/combined_dashboard.py
 ```
 
 Features:
+- Live game scorebox
+- Live point pregression chart
+- Interactive analysis
 - Team W/L record, avg points for/against, avg FG% for any team + season
 - Points-per-game trend chart
 - Season averages table
@@ -183,12 +226,24 @@ airflow tasks test nba_daily_pipeline transform 2024-11-15
 
 ---
 
-## Live Pipeline (incomplete)
+## Live Pipeline 
 
-| File | Status | Description |
-|------|--------|-------------|
-| `live_pipeline/kafka_ingestion.py` | Incomplete | Kafka producer polling NBA CDN live scoreboard — missing `producer.send()` and main loop |
-| `live_pipeline/spark_streaming_bones.py` | Incomplete | Spark Streaming consumer writing to `LIVE_DATA` — missing Kafka bootstrap/topic options and PySpark type imports |
+ 
+Architecture (no Kafka):
+    NBA Stats API  (via nba_api package → stats.nba.com)
+        ↓  (polled every 10s by background thread)
+    Python Queue
+        ↓  (drained every 10s by Spark micro-batch)
+    Spark DataFrame
+        ↓
+    Snowflake LIVE_DATA
+ 
+ 
+```bash
+run streamlit spark_streaming_noKafka.py
+```
+
+
 
 Requires Kafka running at `localhost:9092` and the `LIVE_DATA` table created via `snowflake/schema.sql`.
 
