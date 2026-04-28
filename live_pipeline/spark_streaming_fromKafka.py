@@ -1,3 +1,13 @@
+""" Script to stream data using spark for a Kafka topic 
+
+Run:
+    python spark_fromKafka.py
+
+Requirements:
+    pip install pyspark cryptography
+
+"""
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, current_timestamp
 from pyspark.sql.window import Window
@@ -12,27 +22,22 @@ kafka_broker = "localhost:9092"
 topic = "NBA-live-updates"
 checkpoint = "/tmp/nba_stream_checkpoint"
 
-def get_private_key_string(key_path, password=None):
-    """Reads a PEM private key and returns the string format required by PySpark."""
-    with open(key_path, "rb") as key_file:
+# Helper function for private key
+def get_private_key_string(key_path: str) -> str:
+    with open(key_path, "rb") as f:
         p_key = serialization.load_pem_private_key(
-            key_file.read(),
-            password=password.encode() if password else None,
-            backend=default_backend()
+            f.read(), password=None, backend=default_backend()
         )
-
     pkb = p_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
+        encryption_algorithm=serialization.NoEncryption(),
     )
-
-    # Spark requires the raw key string without headers, footers, or newlines
-    pkb_str = pkb.decode("utf-8")
-    pkb_str = pkb_str.replace("-----BEGIN PRIVATE KEY-----", "")
-    pkb_str = pkb_str.replace("-----END PRIVATE KEY-----", "")
-    pkb_str = pkb_str.replace("\n", "")
-    return pkb_str
+    key_str = pkb.decode("utf-8")
+    key_str = key_str.replace("-----BEGIN PRIVATE KEY-----", "")
+    key_str = key_str.replace("-----END PRIVATE KEY-----", "")
+    key_str = key_str.replace("\n", "")
+    return key_str
 
 def create_spark_session(app_name="NBA-live-updates"):
     try:
@@ -54,7 +59,7 @@ def create_spark_session(app_name="NBA-live-updates"):
     return spark
 
 def build_stream(spark, ckpt_path=checkpoint):
-    key_path = "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"
+    key_path = "~/CSE5114_final/passkeys/dolphin_key.p8"
     # Snowflake options
     sfOptions = {
       "sfURL": "sfedu02-unb02139.snowflakecomputing.com",
@@ -76,7 +81,7 @@ def build_stream(spark, ckpt_path=checkpoint):
             .add("clock", StringType()) \
             .add("game_status", StringType()) 
 
-    # Read kafka stream -- need to configure properly
+    # Read kafka stream 
     spark_stream = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", kafka_broker) \
         .option("subscribe", topic) \
@@ -98,8 +103,7 @@ def build_stream(spark, ckpt_path=checkpoint):
             .mode("append") \
             .save()
        
-    # Write stream every 30s window -- can add more sophisticated window/watermark
-    sf_query = processed_df.writeStream.foreachBatch(snowflake_write).trigger(processingTime="30 seconds").option("checkpointLocation", ckpt_path).start()
+    sf_query = processed_df.writeStream.foreachBatch(snowflake_write).trigger(processingTime="5 seconds").option("checkpointLocation", ckpt_path).start()
 
     return sf_query
     

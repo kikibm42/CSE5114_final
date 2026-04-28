@@ -1,3 +1,5 @@
+-- Builds table in snowflake for live_data to be stored 
+
 USE DATABASE DOLPHIN_DB;
 USE SCHEMA PUBLIC;
 

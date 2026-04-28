@@ -33,22 +33,17 @@ import plotly.graph_objects as go
 import streamlit as st
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
-
-# ──────────────────────────────────────────────
-# PAGE CONFIG  (must be first Streamlit call)
-# ──────────────────────────────────────────────
+ 
+# Configure page
 st.set_page_config(
     page_title="NBA Dashboard",
     page_icon="🏀",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-# ──────────────────────────────────────────────
-# GLOBAL CSS
-# ──────────────────────────────────────────────
-st.markdown(
-    """
+ 
+# Layout and design specs
+st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;800&family=Barlow:wght@400;500&display=swap');
 
@@ -173,19 +168,16 @@ st.markdown(
     section[data-testid="stSidebar"] { background-color: #111122; }
     .stDataFrame { border-radius: 8px; overflow: hidden; }
 </style>
-""",
-    unsafe_allow_html=True,
-)
-
-
-# ──────────────────────────────────────────────
-# PRIVATE KEY HELPER
-# ──────────────────────────────────────────────
-def _load_private_key_der(key_path: str, password=None) -> bytes:
-    with open(key_path, "rb") as f:
+""", unsafe_allow_html=True)
+ 
+ 
+# Private key helper function
+def _load_private_key_der(key_path: str) -> bytes:
+    path = os.path.expanduser(key_path)
+    with open(path, "rb") as f:
         p_key = serialization.load_pem_private_key(
             f.read(),
-            password=password.encode() if password else None,
+            password=None,
             backend=default_backend(),
         )
     return p_key.private_bytes(
@@ -193,17 +185,15 @@ def _load_private_key_der(key_path: str, password=None) -> bytes:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-
-
-# ──────────────────────────────────────────────
-# SNOWFLAKE CONNECTIONS
-# ──────────────────────────────────────────────
-import snowflake.connector  # noqa: E402 — import after page config
-
-DEFAULT_PEM = os.path.join(os.path.dirname(__file__), "../rsa_key.p8")
-
-
-# ── Historical DB (MINNOW) ──
+ 
+ 
+# Set snowflake connections for minow and dolphin DBs
+import snowflake.connector 
+ 
+DEFAULT_MINNOW_PEM  = os.environ.get("NBA_MINNOW_PEM",  os.path.expanduser("~/CSE5114_final/passkeys/minow_key.p8"))
+DEFAULT_DOLPHIN_PEM = os.environ.get("NBA_DOLPHIN_PEM", os.path.expanduser("~/CSE5114_final/passkeys/dolphin_key.p8"))
+ 
+# Historical DB (MINNOW) 
 @st.cache_resource
 def get_hist_conn(pem_path: str):
     return snowflake.connector.connect(
@@ -223,24 +213,18 @@ def run_hist(sql: str, params=None) -> pd.DataFrame:
         return pd.DataFrame.from_records(
             cur.fetchall(), columns=[d[0].lower() for d in cur.description]
         )
-
-
-# ── Live DB (DOLPHIN) ──
+ 
+ 
+# Live DB (DOLPHIN) 
 @st.cache_resource
-def get_live_conn(key="dolphin"):
-    # Update key_path / password as needed
-    key_path = os.environ.get(
-        "NBA_LIVE_PEM",
-        "../kiki_rsa_key.p8",
-    )
-    password = os.environ.get("NBA_LIVE_PEM_PASS", "JackAbah25")
+def get_live_conn(pem_path: str):
     return snowflake.connector.connect(
         user="DOLPHIN",
         account="sfedu02-unb02139",
         database="DOLPHIN_DB",
         schema="PUBLIC",
         warehouse="DOLPHIN_WH",
-        private_key=_load_private_key_der(key_path, password),
+        private_key=_load_private_key_der(pem_path),
     )
 
 
@@ -254,9 +238,7 @@ def run_live(sql: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=cols)
 
 
-# ──────────────────────────────────────────────
-# LIVE DATA LOADERS
-# ──────────────────────────────────────────────
+# live data loaders
 def fetch_live_games() -> pd.DataFrame:
     df = run_live("""
         SELECT game_id, h_team, a_team,
@@ -281,9 +263,7 @@ def fetch_score_history(game_id: str) -> pd.DataFrame:
     """)
 
 
-# ──────────────────────────────────────────────
-# HISTORICAL DATA LOADERS
-# ──────────────────────────────────────────────
+# Historical data loaders
 @st.cache_data(ttl=3600)
 def load_teams() -> pd.DataFrame:
     return run_hist("SELECT team_id, name, abbreviation FROM dim_team ORDER BY name")
@@ -416,9 +396,7 @@ def load_head_to_head(team_a_id: int, team_b_id: int, season: str) -> pd.DataFra
     )
 
 
-# ──────────────────────────────────────────────
-# UI HELPERS
-# ──────────────────────────────────────────────
+
 def render_live_card(game: pd.Series, selected: bool = False) -> None:
     card_class = "game-card selected" if selected else "game-card"
     h_pts = int(game.get("h_points", 0) or 0)
@@ -603,14 +581,14 @@ def render_head_to_head(df: pd.DataFrame) -> None:
     st.dataframe(display, width='stretch', hide_index=True)
 
 
-# ──────────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────────
+
 def main():
     # ── Session defaults ──────────────────────
-    if "pem_path" not in st.session_state:
-        st.session_state.pem_path = os.environ.get("NBA_PEM_KEY", DEFAULT_PEM)
-
+    if "minnow_pem" not in st.session_state:
+        st.session_state.minnow_pem = DEFAULT_MINNOW_PEM
+    if "dolphin_pem" not in st.session_state:
+        st.session_state.dolphin_pem = DEFAULT_DOLPHIN_PEM
+ 
     # ── Header ────────────────────────────────
     now_str = datetime.now().strftime("%a %b %d  ·  %I:%M:%S %p")
     st.markdown(
@@ -622,28 +600,43 @@ def main():
         </div>
         <div class="header-sub">{now_str}</div>
     </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-    # ── Sidebar controls ──────────────────────
+    """, unsafe_allow_html=True)
+ 
+    # ── Sidebar ───────────────────────────────
     with st.sidebar:
-        st.header("Settings")
-        pem_input = st.text_input(
-            "Historical PEM key path", value=st.session_state.pem_path
+        st.header("⚙️ Settings")
+ 
+        st.subheader("🔑 Key Paths")
+        minnow_input = st.text_input(
+            "MINNOW_DB key (.p8)",
+            value=st.session_state.minnow_pem,
+            help="Path to the unencrypted MINNOW private key file",
         )
-        if pem_input != st.session_state.pem_path:
-            st.session_state.pem_path = pem_input
+        dolphin_input = st.text_input(
+            "DOLPHIN_DB key (.p8)",
+            value=st.session_state.dolphin_pem,
+            help="Path to the unencrypted DOLPHIN private key file",
+        )
+ 
+        # If either path changed, update session state and drop cached connections
+        if minnow_input  != st.session_state.minnow_pem or \
+           dolphin_input != st.session_state.dolphin_pem:
+            st.session_state.minnow_pem  = minnow_input
+            st.session_state.dolphin_pem = dolphin_input
             st.cache_resource.clear()
-
+            st.success("Key paths updated — reconnecting...")
+ 
         st.markdown("---")
-        auto_refresh = st.toggle("Auto-refresh live data", value=True)
-        refresh_interval = st.selectbox("Refresh interval (s)", [15, 30, 60], index=1)
-
+        st.subheader("🔄 Live Refresh")
+        auto_refresh     = st.toggle("Auto-refresh", value=True)
+        refresh_interval = st.selectbox("Interval (s)", [15, 30, 60], index=1)
+ 
     # ── Fetch live games ──────────────────────
-    live_games = pd.DataFrame()
-    live_error = None
-
+    live_games   = pd.DataFrame()
+    live_error   = None
+    selected_game    = None
+    selected_game_id = None
+ 
     with st.spinner("Fetching live games..."):
         try:
             live_games = fetch_live_games()
@@ -657,19 +650,15 @@ def main():
     )
 
     if live_error:
-        st.error(f"Could not connect to live data source: {live_error}")
+        st.error(f"Could not connect to live data (DOLPHIN_DB): {live_error}")
     elif live_games.empty:
         st.info("No games are currently in progress. Check back when games are live.")
-        selected_game = None
-        selected_game_id = None
     else:
-        # Mini scorecards (up to 4 per row)
         cols = st.columns(min(len(live_games), 4))
         for i, (_, g) in enumerate(live_games.iterrows()):
             with cols[i % 4]:
                 render_live_card(g)
-
-        # ── Dropdown to pick one game ─────────
+ 
         st.markdown("---")
         game_labels = {
             f"{row['h_team']} vs {row['a_team']}": row["game_id"]
@@ -690,45 +679,35 @@ def main():
             )
         else:
             selected_game_id = game_labels[chosen_label]
-            selected_game = live_games[live_games["game_id"] == selected_game_id].iloc[
-                0
-            ]
+            selected_game = live_games[live_games["game_id"] == selected_game_id].iloc[0]
 
     # ── Section 2: Selected game deep-dive ───
     if selected_game is not None:
         h_team_code = selected_game["h_team"]
         a_team_code = selected_game["a_team"]
-
+ 
         st.markdown(
             f'<div class="section-title">📊 {h_team_code} vs {a_team_code} — Game Detail</div>',
             unsafe_allow_html=True,
         )
-
-        # ── 2a. Score progression ─────────────
+ 
         history_df = fetch_score_history(selected_game_id)
         render_score_progression(history_df, h_team_code, a_team_code)
-
-        # ── 2b. Historical data ───────────────
+ 
         st.markdown("---")
-        st.markdown(
-            '<div class="section-title">📜 Historical Team Stats</div>',
-            unsafe_allow_html=True,
-        )
-
-        # Try to connect to historical DB
+        st.markdown('<div class="section-title">📜 Historical Team Stats</div>', unsafe_allow_html=True)
+ 
         hist_ok = True
         try:
             teams_df = load_teams()
-            seasons = load_seasons()
+            seasons  = load_seasons()
         except Exception as e:
-            st.error(f"Could not connect to historical Snowflake DB: {e}")
+            st.error(f"Could not connect to historical data (MINNOW_DB): {e}")
             hist_ok = False
 
         if hist_ok:
-            # Season picker (sidebar-style inline)
             sel_season = st.selectbox("Season", seasons, key="hist_season")
-
-            # Match live tricode → historical team_id
+ 
             def find_team(tricode: str) -> tuple:
                 row = teams_df[teams_df["abbreviation"].str.upper() == tricode.upper()]
                 if row.empty:
@@ -783,7 +762,6 @@ def main():
     if auto_refresh and not live_error:
         time.sleep(refresh_interval)
         st.rerun()
-
 
 if __name__ == "__main__":
     main()

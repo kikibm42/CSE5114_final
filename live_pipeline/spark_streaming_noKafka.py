@@ -1,23 +1,8 @@
 """
-NBA Live Streaming Pipeline (Kafka-free)
------------------------------------------
-Polls the NBA CDN scoreboard API directly inside Spark using a background
-thread + shared queue. Every 30 seconds Spark's foreachBatch trigger fires,
-drains the queue into a DataFrame, and appends it to Snowflake LIVE_DATA.
-
-Architecture (no Kafka):
-    NBA CDN API
-        ↓  (polled every 30s by background thread)
-    Python Queue
-        ↓  (drained every 30s by Spark micro-batch)
-    Spark DataFrame
-        ↓
-    Snowflake LIVE_DATA
+Script to poll the NBA API and stream using spark to a live table in snowflake 
 
 Run:
-    spark-submit \
-      --packages net.snowflake:snowflake-jdbc:3.13.30,net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4 \
-      spark_streaming.py
+    python spark_streaming_noKafka.py
 
 Requirements:
     pip install pyspark requests cryptography
@@ -35,44 +20,33 @@ import time
 import os
 from nba_api.live.nba.endpoints import scoreboard
 
-# ---------------------------------------------------------------------------
-# Configuration — update key_path if running locally
-# ---------------------------------------------------------------------------
 # NBA_SCOREBOARD_URL  = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
-POLL_INTERVAL_SEC   = 5      # How often to hit the NBA API
-SNOWFLAKE_KEY_PATH  = "/home/compute/fbonetta-misteli/.ssh/rsa_key.p8"  # ← update for local
+POLL_INTERVAL_SEC   = 5      # Used for the poller and spark ingestion
+SNOWFLAKE_KEY_PATH  = "~/CSE5114_final/passkeys/dolphin_key.p8"  # unencrypted file for snowflake connection to dolphin database
 CHECKPOINT_PATH     = "/tmp/nba_stream_checkpoint"
 
-# Shared queue — the poller thread puts game dicts here,
-# Spark's foreachBatch drains it each trigger interval
+# Poller adds games to the game queue which spark will drain in micro-batches
 game_queue: queue.Queue = queue.Queue()
 
 
-# ---------------------------------------------------------------------------
-# Private key helper
-# ---------------------------------------------------------------------------
-def get_private_key_string(key_path: str, password: str = None) -> str:
+# Helper function for private key
+def get_private_key_string(key_path: str) -> str:
     with open(key_path, "rb") as f:
         p_key = serialization.load_pem_private_key(
-            f.read(),
-            password=password.encode() if password else None,
-            backend=default_backend()
+            f.read(), password=None, backend=default_backend()
         )
     pkb = p_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
+        encryption_algorithm=serialization.NoEncryption(),
     )
-    pkb_str = pkb.decode("utf-8")
-    pkb_str = pkb_str.replace("-----BEGIN PRIVATE KEY-----", "")
-    pkb_str = pkb_str.replace("-----END PRIVATE KEY-----", "")
-    pkb_str = pkb_str.replace("\n", "")
-    return pkb_str
+    key_str = pkb.decode("utf-8")
+    key_str = key_str.replace("-----BEGIN PRIVATE KEY-----", "")
+    key_str = key_str.replace("-----END PRIVATE KEY-----", "")
+    key_str = key_str.replace("\n", "")
+    return key_str
 
-
-# ---------------------------------------------------------------------------
-# NBA API poller (runs in a background thread)
-# ---------------------------------------------------------------------------
+# Collects games from the NBA endpoint -- one for the CDN and one using the API directly 
 # def fetch_games() -> list:
 #     """Fetch today's scoreboard and return a list of game dicts."""
 #     r = requests.get(NBA_SCOREBOARD_URL, timeout=10)
@@ -83,14 +57,12 @@ def fetch_games() -> list:
     games = board.get_dict()["scoreboard"]["games"]
     return games
 
-
+# Creates a background thread to poll the API endpoint every POLL_INTERVAL_SECONDS seconds
 def poller_thread(stop_event: threading.Event):
-    """
-    Background thread: polls the NBA API every POLL_INTERVAL_SEC seconds
-    and puts each game as a dict onto game_queue.
-    Runs independently of Spark — keeps collecting data between batches.
-    """
+
     print(f"[Poller] Starting. Polling every {POLL_INTERVAL_SEC}s...")
+
+    # Puts the fetched games into the game_queue
     while not stop_event.is_set():
         try:
             games = fetch_games()
@@ -115,7 +87,7 @@ def poller_thread(stop_event: threading.Event):
         except Exception as e:
             print(f"[Poller] Unexpected error: {e}")
 
-        # Wait for next poll, but check stop_event frequently so we can exit cleanly
+        # Pause between poll intervals and check if stop event is triggered to exit 
         for _ in range(POLL_INTERVAL_SEC):
             if stop_event.is_set():
                 break
@@ -124,10 +96,10 @@ def poller_thread(stop_event: threading.Event):
     print("[Poller] Stopped.")
 
 
-# ---------------------------------------------------------------------------
-# Spark session
-# ---------------------------------------------------------------------------
+# Creates spark session for draining the queue
 def create_spark_session(app_name: str = "NBA-Live-Streaming") -> SparkSession:
+
+    # WUSTL cluster info
     try:
         node        = os.environ["SLURMD_NODENAME"]
         master_port = os.environ["SPARK_MASTER_PORT"]
@@ -137,6 +109,7 @@ def create_spark_session(app_name: str = "NBA-Live-Streaming") -> SparkSession:
         print("[Spark] Cluster env vars not found — falling back to local[*]")
         master_url = "local[*]"
 
+    # Build spark session
     spark = SparkSession.builder \
         .appName(app_name) \
         .master(master_url) \
@@ -154,9 +127,7 @@ def create_spark_session(app_name: str = "NBA-Live-Streaming") -> SparkSession:
     return spark
 
 
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
+# Snowflake schema initialization 
 NBA_SCHEMA = StructType() \
     .add("game_id",     StringType()) \
     .add("h_team",      StringType()) \
@@ -168,33 +139,27 @@ NBA_SCHEMA = StructType() \
     .add("game_status", StringType())
 
 
-# ---------------------------------------------------------------------------
-# Streaming pipeline
-# ---------------------------------------------------------------------------
+# Build and start spark stream to snowflake
 def build_and_run_stream(spark: SparkSession):
-    """
-    Uses Spark's 'rate' source as a reliable micro-batch clock.
-    Each batch trigger drains the shared queue, builds a DataFrame,
-    and writes it to Snowflake.
-    """
+
+    # Snowflake database connection options
     sf_options = {
         "sfURL":           "sfedu02-unb02139.snowflakecomputing.com",
         "sfUser":          "DOLPHIN",
         "sfDatabase":      "DOLPHIN_DB",
         "sfSchema":        "PUBLIC",
         "sfWarehouse":     "DOLPHIN_WH",
-        "pem_private_key": get_private_key_string(SNOWFLAKE_KEY_PATH, password="JackAbah25"),
+        "pem_private_key": get_private_key_string(SNOWFLAKE_KEY_PATH),
     }
 
-    # 'rate' source emits one row per second — we use it purely as a
-    # reliable trigger clock. The actual data comes from game_queue.
+    # rate source emits one row per second and is used as a clock for the spark stream
     rate_stream = spark.readStream \
         .format("rate") \
         .option("rowsPerSecond", 1) \
         .load()
 
+    # Drains game_queue and writes to snowflake
     def process_batch(batch_df, batch_id):
-        """Drain the queue and write whatever accumulated since the last batch."""
         rows = []
         while not game_queue.empty():
             try:
@@ -208,7 +173,7 @@ def build_and_run_stream(spark: SparkSession):
 
         print(f"[Batch {batch_id}] Writing {len(rows)} rows to Snowflake...")
 
-        # Build a proper DataFrame from the queued dicts
+        # Build a DataFrame from the queued dicts
         game_df = spark.createDataFrame(rows, schema=NBA_SCHEMA) \
                        .withColumn("processed_time", current_timestamp())
 
@@ -230,9 +195,7 @@ def build_and_run_stream(spark: SparkSession):
     return query
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     spark = create_spark_session()
 
@@ -241,11 +204,11 @@ if __name__ == "__main__":
     poller = threading.Thread(target=poller_thread, args=(stop_event,), daemon=True)
     poller.start()
 
-    # Give the poller one cycle to collect data before Spark's first batch fires
+    # Give the poller one cycle to collect data before spark's first batch runs
     print(f"[Main] Waiting {POLL_INTERVAL_SEC}s for initial data collection...")
     time.sleep(POLL_INTERVAL_SEC)
 
-    # Start the Spark streaming query
+    # Start the spark streaming query
     print("[Main] Starting Spark streaming query...")
     query = build_and_run_stream(spark)
 
